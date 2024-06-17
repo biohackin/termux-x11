@@ -106,7 +106,7 @@ public final class ExtraKeysView extends GridLayout {
     }
 
     /** Defines the default value for {@link #mButtonTextColor} */
-    public static final int DEFAULT_BUTTON_TEXT_COLOR = 0xFFFFFFFF;
+    //public static final int DEFAULT_BUTTON_TEXT_COLOR = 0xFFFFFFFF;
     public static final int DEFAULT_BUTTON_TEXT_COLOR = 0xFF98CBFF;  //..SimplyTheBest
     /** Defines the default value for {@link #mButtonActiveTextColor} */
     public static final int DEFAULT_BUTTON_ACTIVE_TEXT_COLOR = 0xFF80DEEA;
