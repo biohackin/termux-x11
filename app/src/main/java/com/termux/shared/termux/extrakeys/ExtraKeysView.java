@@ -106,15 +106,15 @@ public final class ExtraKeysView extends GridLayout {
     }
 
     /** Defines the default value for {@link #mButtonTextColor} */
-    //public static final int DEFAULT_BUTTON_TEXT_COLOR = 0xFFFFFFFF;
-    public static final int DEFAULT_BUTTON_TEXT_COLOR = 0xFF98CBFF;  //..SimplyTheBest
+    public static final int DEFAULT_BUTTON_TEXT_COLOR = 0xFFFFFFFF;
     /** Defines the default value for {@link #mButtonActiveTextColor} */
-    public static final int DEFAULT_BUTTON_ACTIVE_TEXT_COLOR = 0xFF80DEEA;
+    //public static final int DEFAULT_BUTTON_ACTIVE_TEXT_COLOR = 0xFF80DEEA;
+    public static final int DEFAULT_BUTTON_ACTIVE_TEXT_COLOR = 0xFF98CBFF;  //..SimplyTheBest
     /** Defines the default value for {@link #mButtonBackgroundColor} */
     public static final int DEFAULT_BUTTON_BACKGROUND_COLOR = 0x00000000;
     /** Defines the default value for {@link #mButtonActiveBackgroundColor} */
-    //public static final int DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR = 0xFF7F7F7F;
-    public static final int DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR = 0xFF454545;  //..SimplyTheBest
+    public static final int DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR = 0xFF7F7F7F;
+    //public static final int DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR = 0xFF454545;  //..SimplyTheBest
 
     /** Defines the minimum allowed duration in milliseconds for {@link #mLongPressTimeout}. */
     public static final int MIN_LONG_PRESS_DURATION = 200;
@@ -314,8 +314,8 @@ public final class ExtraKeysView extends GridLayout {
                     button = new Button(getContext(), null, android.R.attr.buttonBarButtonStyle);
                 }
 
-                //button.setBackground(new ColorDrawable(Color.BLACK) {
-                button.setBackground(new ColorDrawable(0x80000000) {  //..SimplyTheBest
+                button.setBackground(new ColorDrawable(Color.BLACK) {
+                //button.setBackground(new ColorDrawable(0x80000000) {  //..SimplyTheBest
                     public boolean isStateful() {
                         return true;
                     }
@@ -337,7 +337,7 @@ public final class ExtraKeysView extends GridLayout {
                     switch (event.getAction()) {
                         case MotionEvent.ACTION_DOWN:
                             //view.setBackgroundColor(mButtonActiveBackgroundColor);
-                            view.setBackgroundColor(0x80000000);  //..SimplyTheBest
+                            view.setBackgroundColor(0x50FFFFFF);  //..SimplyTheBest
                             // Start long press scheduled executors which will be stopped in next MotionEvent
                             startScheduledExecutors(view, buttonInfo, button);
                             return true;
@@ -353,7 +353,7 @@ public final class ExtraKeysView extends GridLayout {
                                 }
                                 if (mPopupWindow != null && event.getY() > 0) {
                                     //view.setBackgroundColor(mButtonActiveBackgroundColor);
-                                    view.setBackgroundColor(0x80000000);  //..SimplyTheBest
+                                    view.setBackgroundColor(0x50FFFFFF);  //..SimplyTheBest
                                     dismissPopup();
                                 }
                             }
