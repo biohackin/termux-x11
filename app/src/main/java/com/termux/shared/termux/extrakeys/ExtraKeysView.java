@@ -114,7 +114,6 @@ public final class ExtraKeysView extends GridLayout {
     public static final int DEFAULT_BUTTON_BACKGROUND_COLOR = 0x00000000;
     /** Defines the default value for {@link #mButtonActiveBackgroundColor} */
     public static final int DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR = 0xFF7F7F7F;
-    //public static final int DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR = 0xFF454545;  //..SimplyTheBest
 
     /** Defines the minimum allowed duration in milliseconds for {@link #mLongPressTimeout}. */
     public static final int MIN_LONG_PRESS_DURATION = 200;
@@ -315,7 +314,6 @@ public final class ExtraKeysView extends GridLayout {
                 }
 
                 button.setBackground(new ColorDrawable(Color.BLACK) {
-                //button.setBackground(new ColorDrawable(0x80000000) {  //..SimplyTheBest
                     public boolean isStateful() {
                         return true;
                     }
