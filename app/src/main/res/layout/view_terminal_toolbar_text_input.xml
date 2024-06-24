@@ -11,11 +11,11 @@
         android:layout_height="match_parent"
         app:realtimeBlurRadius="10dp"
         app:realtimeOverlayColor="@android:color/transparent" />
-    <!--<View
-        android:background="@color/background_accent"
+    <View
+        android:background="@android:color/transparent"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:alpha="0.5"/>-->
+        android:alpha="0.5"/>
     <LinearLayout xmlns:tools="http://schemas.android.com/tools"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
