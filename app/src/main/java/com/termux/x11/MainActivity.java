@@ -3,7 +3,6 @@ package com.termux.x11;
 import static android.Manifest.permission.WRITE_SECURE_SETTINGS;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.Build.VERSION.SDK_INT;
-import static android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC;
 import static android.view.KeyEvent.*;
 import static android.view.WindowManager.LayoutParams.*;
 import static com.termux.x11.CmdEntryPoint.ACTION_START;
@@ -21,7 +20,6 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
@@ -35,7 +33,6 @@ import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.SystemClock;
-import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.service.notification.StatusBarNotification;
 import android.util.DisplayMetrics;
@@ -66,7 +63,6 @@ import androidx.viewpager.widget.ViewPager;
 
 import com.termux.x11.input.InputEventSender;
 import com.termux.x11.input.InputStub;
-import com.termux.x11.input.TouchInputHandler.RenderStub;
 import com.termux.x11.input.TouchInputHandler;
 import com.termux.x11.utils.FullscreenWorkaround;
 import com.termux.x11.utils.KeyInterceptor;
@@ -94,12 +90,10 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
     private static boolean externalKeyboardConnected = false;
     private boolean mClientConnected = false;
     private View.OnKeyListener mLorieKeyListener;
-    boolean captureVolumeKeys = false;
     private boolean filterOutWinKey = false;
-    private boolean hideEKOnVolDown = false;
-    private boolean toggleIMEUsingBackKey = false;
     private boolean useTermuxEKBarBehaviour = false;
-    private static final int KEY_BACK = 158;
+
+    public static Prefs prefs = null;
 
     private static boolean oldFullscreen = false;
     private static boolean oldHideCutout = false;
@@ -108,6 +102,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
         @SuppressLint("UnspecifiedRegisterReceiverFlag")
         @Override
         public void onReceive(Context context, Intent intent) {
+            prefs.recheckStoringSecondaryDisplayPreferences();
             if (ACTION_START.equals(intent.getAction())) {
                 try {
                     Log.v("LorieBroadcastReceiver", "Got new ACTION_START intent");
@@ -142,6 +137,10 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
         instance = this;
     }
 
+    public static Prefs getPrefs() {
+        return prefs;
+    }
+
     public static MainActivity getInstance() {
         return instance;
     }
@@ -151,18 +150,15 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        int modeValue = Integer.parseInt(preferences.getString("touchMode", "1")) - 1;
-        if (modeValue > 2) {
-            SharedPreferences.Editor e = Objects.requireNonNull(preferences).edit();
-            e.putString("touchMode", "1");
-            e.apply();
-        }
+        prefs = new Prefs(this);
+        int modeValue = Integer.parseInt(prefs.touchMode.get()) - 1;
+        if (modeValue > 2)
+            prefs.touchMode.put("1");
 
-        oldFullscreen = preferences.getBoolean("fullscreen", false);
-        oldHideCutout = preferences.getBoolean("hideCutout", false);
+        oldFullscreen = prefs.fullscreen.get();
+        oldHideCutout = prefs.hideCutout.get();
 
-        preferences.registerOnSharedPreferenceChangeListener((sharedPreferences, key) -> onPreferencesChanged(key));
+        prefs.get().registerOnSharedPreferenceChangeListener((sharedPreferences, key) -> onPreferencesChanged(key));
 
         getWindow().setFlags(FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS | FLAG_KEEP_SCREEN_ON | FLAG_TRANSLUCENT_STATUS, 0);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -171,47 +167,15 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
         frm = findViewById(R.id.frame);
         findViewById(R.id.preferences_button).setOnClickListener((l) -> startActivity(new Intent(this, LoriePreferences.class) {{ setAction(Intent.ACTION_MAIN); }}));
         findViewById(R.id.help_button).setOnClickListener((l) -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/termux/termux-x11/blob/master/README.md#running-graphical-applications"))));
+        findViewById(R.id.exit_button).setOnClickListener((l) -> finish());
 
         LorieView lorieView = findViewById(R.id.lorieView);
         View lorieParent = (View) lorieView.getParent();
 
-        mInputHandler = new TouchInputHandler(this, new RenderStub.NullStub() {
-            @Override
-            public void swipeDown() {
-                toggleExtraKeys();
-            }
-        }, new InputEventSender(lorieView));
+        mInputHandler = new TouchInputHandler(this, new InputEventSender(lorieView));
         mLorieKeyListener = (v, k, e) -> {
             InputDevice dev = e.getDevice();
-            boolean result;
-
-            if (!captureVolumeKeys && (k == KEYCODE_VOLUME_DOWN || k == KEYCODE_VOLUME_UP))
-                return false;
-
-            if (hideEKOnVolDown && k == KEYCODE_VOLUME_DOWN) {
-                if (e.getAction() == ACTION_UP)
-                    toggleExtraKeys();
-                return true;
-            }
-
-            if (k == KEYCODE_BACK) {
-                if (e.isFromSource(InputDevice.SOURCE_MOUSE) || e.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
-                    if (e.getRepeatCount() != 0) // ignore auto-repeat
-                        return true;
-                    if (e.getAction() == KeyEvent.ACTION_UP || e.getAction() == KeyEvent.ACTION_DOWN)
-                        lorieView.sendMouseEvent(-1, -1, InputStub.BUTTON_RIGHT, e.getAction() == KeyEvent.ACTION_DOWN, true);
-                    return true;
-                }
-
-                if (e.getScanCode() == KEY_BACK && e.getDevice().getKeyboardType() != KEYBOARD_TYPE_ALPHABETIC || e.getScanCode() == 0) {
-                    if (toggleIMEUsingBackKey && e.getAction() == ACTION_UP)
-                        toggleKeyboardVisibility(MainActivity.this);
-
-                    return true;
-                }
-            }
-
-            result = mInputHandler.sendKeyEvent(e);
+            boolean result = mInputHandler.sendKeyEvent(e);
 
             // Do not steal dedicated buttons from a full external keyboard.
             if (useTermuxEKBarBehaviour && mExtraKeys != null && (dev == null || dev.isVirtual()))
@@ -281,8 +245,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
     //Register the needed events to handle stylus as left, middle and right click
     @SuppressLint("ClickableViewAccessibility")
     private void initStylusAuxButtons() {
-        SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean stylusMenuEnabled = p.getBoolean("showStylusClickOverride", false);
+        boolean stylusMenuEnabled = prefs.showStylusClickOverride.get();
         final float menuUnselectedTrasparency = 0.66f;
         final float menuSelectedTrasparency = 1.0f;
         Button left = findViewById(R.id.button_left_click);
@@ -386,8 +349,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
         LinearLayout primaryLayer = findViewById(R.id.mouse_buttons);
         LinearLayout secondaryLayer = findViewById(R.id.mouse_buttons_secondary_layer);
 
-        SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean mouseHelperEnabled = p.getBoolean("showMouseHelper", false) && "1".equals(p.getString("touchMode", "1"));
+        boolean mouseHelperEnabled = prefs.showMouseHelper.get() && "1".equals(prefs.touchMode.get());
         primaryLayer.setVisibility(mouseHelperEnabled ? View.VISIBLE : View.GONE);
 
         pos.setOnClickListener((v) -> {
@@ -494,7 +456,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
                 LorieView.connect(fd.detachFd());
                 getLorieView().triggerCallback();
                 clientConnectedStateChanged(true);
-                getLorieView().reloadPreferences(PreferenceManager.getDefaultSharedPreferences(this));
+                getLorieView().reloadPreferences(prefs);
             } else
                 handler.postDelayed(this::tryConnect, 500);
         } catch (Exception e) {
@@ -507,23 +469,23 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
     }
 
     void onPreferencesChanged(String key) {
+        prefs.recheckStoringSecondaryDisplayPreferences();
+
         if ("additionalKbdVisible".equals(key))
             return;
 
-        SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(this);
         LorieView lorieView = getLorieView();
 
-        mInputHandler.reloadPreferences(p);
-        lorieView.reloadPreferences(p);
-        captureVolumeKeys = p.getBoolean("captureVolumeKeys", true);
+        mInputHandler.reloadPreferences(prefs);
+        lorieView.reloadPreferences(prefs);
 
         setTerminalToolbarView();
         onWindowFocusChanged(true);
 
         lorieView.triggerCallback();
 
-        filterOutWinKey = p.getBoolean("filterOutWinkey", false);
-        if (p.getBoolean("enableAccessibilityServiceAutomatically", false)) {
+        filterOutWinKey = prefs.filterOutWinkey.get();
+        if (prefs.enableAccessibilityServiceAutomatically.get()) {
             try {
                 Settings.Secure.putString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "com.termux.x11/.utils.KeyInterceptor");
                 Settings.Secure.putString(getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, "1");
@@ -537,26 +499,22 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
                         .create()
                         .show();
 
-                SharedPreferences.Editor edit = p.edit();
-                edit.putBoolean("enableAccessibilityServiceAutomatically", false);
-                edit.commit();
+                prefs.enableAccessibilityServiceAutomatically.put(false);
             }
         } else if (checkSelfPermission(WRITE_SECURE_SETTINGS) == PERMISSION_GRANTED)
             KeyInterceptor.shutdown();
 
-        hideEKOnVolDown = p.getBoolean("hideEKOnVolDown", false);
-        useTermuxEKBarBehaviour = p.getBoolean("useTermuxEKBarBehaviour", false);
-        toggleIMEUsingBackKey = p.getBoolean("toggleIMEUsingBackKey", true);
-        showIMEWhileExternalConnected = p.getBoolean("showIMEWhileExternalConnected", true);
+        useTermuxEKBarBehaviour = prefs.useTermuxEKBarBehaviour.get();
+        showIMEWhileExternalConnected = prefs.showIMEWhileExternalConnected.get();
 
-        int requestedOrientation = p.getBoolean("forceLandscape", false) ?
+        int requestedOrientation = prefs.forceLandscape.get() ?
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
         if (getRequestedOrientation() != requestedOrientation)
             setRequestedOrientation(requestedOrientation);
 
-        findViewById(R.id.mouse_buttons).setVisibility(p.getBoolean("showMouseHelper", false) && "1".equals(p.getString("touchMode", "1")) && mClientConnected ? View.VISIBLE : View.GONE);
+        findViewById(R.id.mouse_buttons).setVisibility(prefs.showMouseHelper.get() && "1".equals(prefs.touchMode.get()) && mClientConnected ? View.VISIBLE : View.GONE);
         LinearLayout buttons = findViewById(R.id.mouse_helper_visibility);
-        if (p.getBoolean("showStylusClickOverride", false)) {
+        if (prefs.showStylusClickOverride.get()) {
             buttons.setVisibility(View.VISIBLE);
         } else {
             //Reset default input back to normal
@@ -570,7 +528,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
             buttons.setVisibility(View.GONE);
         }
 
-        getTerminalToolbarViewPager().setAlpha(((float) p.getInt("opacityEKBar", 100))/100);
+        getTerminalToolbarViewPager().setAlpha(((float) prefs.opacityEKBar.get())/100);
 
         lorieView.requestLayout();
         lorieView.invalidate();
@@ -613,10 +571,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
         final ViewPager pager = getTerminalToolbarViewPager();
         ViewGroup parent = (ViewGroup) pager.getParent();
 
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean showNow = mClientConnected &&
-                preferences.getBoolean("showAdditionalKbd", true) &&
-                preferences.getBoolean("additionalKbdVisible", true);
+        boolean showNow = mClientConnected && prefs.showAdditionalKbd.get() && prefs.additionalKbdVisible.get();
 
         pager.setVisibility(showNow ? View.VISIBLE : View.INVISIBLE);
 
@@ -637,19 +592,15 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
                 (TermuxX11ExtraKeys.getExtraKeysInfo() == null ? 0 : TermuxX11ExtraKeys.getExtraKeysInfo().getMatrix().length));
         pager.setLayoutParams(layoutParams);
 
-        frm.setPadding(0, 0, 0, preferences.getBoolean("adjustHeightForEK", false) && showNow ? layoutParams.height : 0);
+        frm.setPadding(0, 0, 0, prefs.adjustHeightForEK.get() && showNow ? layoutParams.height : 0);
         getLorieView().requestFocus();
     }
 
     public void toggleExtraKeys(boolean visible, boolean saveState) {
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean enabled = preferences.getBoolean("showAdditionalKbd", true);
+        boolean enabled = prefs.showAdditionalKbd.get();
 
-        if (enabled && mClientConnected && saveState) {
-            SharedPreferences.Editor edit = preferences.edit();
-            edit.putBoolean("additionalKbdVisible", visible);
-            edit.commit();
-        }
+        if (enabled && mClientConnected && saveState)
+            prefs.additionalKbdVisible.put(visible);
 
         setTerminalToolbarView();
     }
@@ -727,12 +678,12 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(this);
+        prefs.recheckStoringSecondaryDisplayPreferences();
         Window window = getWindow();
         View decorView = window.getDecorView();
-        boolean fullscreen = p.getBoolean("fullscreen", false);
-        boolean hideCutout = p.getBoolean("hideCutout", false);
-        boolean reseed = p.getBoolean("Reseed", true);
+        boolean fullscreen = prefs.fullscreen.get();
+        boolean hideCutout = prefs.hideCutout.get();
+        boolean reseed = prefs.Reseed.get();
 
         if (oldHideCutout != hideCutout || oldFullscreen != fullscreen) {
             oldHideCutout = hideCutout;
@@ -743,7 +694,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
             return;
         }
 
-        int requestedOrientation = p.getBoolean("forceLandscape", false) ?
+        int requestedOrientation = prefs.forceLandscape.get() ?
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
         if (getRequestedOrientation() != requestedOrientation)
             setRequestedOrientation(requestedOrientation);
@@ -779,7 +730,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
             }
         }
 
-        if (p.getBoolean("keepScreenOn", true))
+        if (prefs.keepScreenOn.get())
             window.addFlags(FLAG_KEEP_SCREEN_ON);
         else
             window.clearFlags(FLAG_KEEP_SCREEN_ON);
@@ -805,8 +756,7 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
 
     @Override
     public void onUserLeaveHint() {
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        if (preferences.getBoolean("PIP", false) && hasPipPermission(this)) {
+        if (prefs.PIP.get() && hasPipPermission(this)) {
             enterPictureInPictureMode();
         }
     }
@@ -841,16 +791,17 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
                 inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
             else
                 inputMethodManager.hideSoftInputFromWindow(getInstance().getLorieView().getWindowToken(), 0);
+
+            getInstance().getLorieView().requestFocus();
         }
     }
 
     @SuppressWarnings("SameParameterValue")
     void clientConnectedStateChanged(boolean connected) {
         runOnUiThread(()-> {
-            SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(this);
             mClientConnected = connected;
             setTerminalToolbarView();
-            findViewById(R.id.mouse_buttons).setVisibility(p.getBoolean("showMouseHelper", false) && "1".equals(p.getString("touchMode", "1")) && mClientConnected ? View.VISIBLE : View.GONE);
+            findViewById(R.id.mouse_buttons).setVisibility(prefs.showMouseHelper.get() && "1".equals(prefs.touchMode.get()) && mClientConnected ? View.VISIBLE : View.GONE);
             findViewById(R.id.stub).setVisibility(connected?View.INVISIBLE:View.VISIBLE);
             getLorieView().setVisibility(connected?View.VISIBLE:View.INVISIBLE);
             getLorieView().regenerate();
@@ -862,6 +813,13 @@ public class MainActivity extends AppCompatActivity implements View.OnApplyWindo
             if (connected)
                 getLorieView().setPointerIcon(PointerIcon.getSystemIcon(this, PointerIcon.TYPE_NULL));
         });
+    }
+
+    public static boolean isConnected() {
+        if (getInstance() == null)
+            return false;
+
+        return getInstance().mClientConnected;
     }
 
     private void checkXEvents() {

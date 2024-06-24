@@ -12,7 +12,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.res.XmlResourceParser;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
@@ -20,6 +19,8 @@ import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.fragment.app.FragmentManager;
+import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 
 import android.os.Handler;
@@ -30,6 +31,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.preference.PreferenceDataStore;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceGroup;
 
@@ -38,11 +40,13 @@ import androidx.preference.SeekBarPreference;
 
 import android.text.method.LinkMovementMethod;
 import android.util.Log;
+import android.view.Display;
 import android.view.InputDevice;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -53,22 +57,20 @@ import com.termux.x11.utils.KeyInterceptor;
 import com.termux.x11.utils.SamsungDexUtils;
 import com.termux.x11.utils.TermuxX11ExtraKeys;
 
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
-
-import java.io.IOException;
 import java.io.StringWriter;
 import java.io.PrintWriter;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.PatternSyntaxException;
 
 @SuppressWarnings("deprecation")
 public class LoriePreferences extends AppCompatActivity {
     static final String ACTION_PREFERENCES_CHANGED = "com.termux.x11.ACTION_PREFERENCES_CHANGED";
-    LoriePreferenceFragment loriePreferenceFragment;
+    private static Prefs prefs = null;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -76,8 +78,11 @@ public class LoriePreferences extends AppCompatActivity {
         public void onReceive(Context context, Intent intent) {
             if (ACTION_PREFERENCES_CHANGED.equals(intent.getAction())) {
                 if (intent.getBooleanExtra("fromBroadcast", false)) {
-                    loriePreferenceFragment.getPreferenceScreen().removeAll();
-                    loriePreferenceFragment.addPreferencesFromResource(R.xml.preferences);
+                    getSupportFragmentManager().getFragments().forEach(fragment -> {
+                        if (fragment instanceof LoriePreferenceFragment) {
+                            ((LoriePreferenceFragment) fragment).reloadPrefs();
+                        }
+                    });
                 }
             }
         }
@@ -86,8 +91,8 @@ public class LoriePreferences extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        loriePreferenceFragment = new LoriePreferenceFragment(null);
-        getSupportFragmentManager().beginTransaction().replace(android.R.id.content, loriePreferenceFragment).commit();
+        prefs = new Prefs(this);
+        getSupportFragmentManager().beginTransaction().replace(android.R.id.content, new LoriePreferenceFragment(null)).commit();
 
         ActionBar actionBar = getSupportActionBar();
         if (actionBar != null) {
@@ -124,6 +129,24 @@ public class LoriePreferences extends AppCompatActivity {
     }
 
     public static class LoriePreferenceFragment extends PreferenceFragmentCompat implements OnPreferenceChangeListener, Preference.OnPreferenceClickListener {
+        private static final Method onSetInitialValue;
+        static {
+            try {
+                //noinspection JavaReflectionMemberAccess
+                onSetInitialValue = Preference.class.getMethod("onSetInitialValue", boolean.class, Object.class);
+            } catch (NoSuchMethodException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        void onSetInitialValue(Preference p) {
+            try {
+                onSetInitialValue.invoke(p, false, null);
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
         final String preference;
         /** @noinspection unused*/ // Used by `androidx.fragment.app.Fragment.instantiate`...
         public LoriePreferenceFragment() {
@@ -135,14 +158,12 @@ public class LoriePreferences extends AppCompatActivity {
         }
 
         @Override
+        @SuppressLint("ApplySharedPref")
         public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
-            SharedPreferences p = getPreferenceManager().getSharedPreferences();
-            int modeValue = p == null ? 0 : Integer.parseInt(p.getString("touchMode", "1")) - 1;
-            if (modeValue > 2) {
-                SharedPreferences.Editor e = Objects.requireNonNull(p).edit();
-                e.putString("touchMode", "1");
-                e.apply();
-            }
+            getPreferenceManager().setPreferenceDataStore(prefs);
+
+            if ((Integer.parseInt(prefs.touchMode.get()) - 1) > 2)
+                prefs.touchMode.put("1");
 
             addPreferencesFromResource(R.xml.preferences);
             //noinspection DataFlowIssue
@@ -156,25 +177,20 @@ public class LoriePreferences extends AppCompatActivity {
                         g.getPreference(i).setVisible(g.getPreference(i).getKey().contentEquals(preference));
                     }
                 }
-            } else {
-                for (int i=0; i < g.getPreferenceCount(); i++) {
-                    if (g.getPreference(i) instanceof PreferenceGroup) {
-                        g.getPreference(i).setVisible(!g.getPreference(i).getKey().contentEquals("ekbar"));
-                    }
-                }
             }
         }
 
         @SuppressWarnings("ConstantConditions")
         void updatePreferencesLayout() {
-            SharedPreferences p = getPreferenceManager().getSharedPreferences();
+            reloadPrefs();
             if (!SamsungDexUtils.available())
                 findPreference("dexMetaKeyCapture").setVisible(false);
             SeekBarPreference scalePreference = findPreference("displayScale");
             SeekBarPreference capturedPointerSpeedFactor = findPreference("capturedPointerSpeedFactor");
             SeekBarPreference opacityEKBar = findPreference("opacityEKBar");
             scalePreference.setMin(30);
-            scalePreference.setMax(200);
+            scalePreference.setMax(300);
+            scalePreference.setUpdatesContinuously(true);
             scalePreference.setSeekBarIncrement(10);
             scalePreference.setShowSeekBarValue(true);
             capturedPointerSpeedFactor.setMin(30);
@@ -186,32 +202,36 @@ public class LoriePreferences extends AppCompatActivity {
             opacityEKBar.setSeekBarIncrement(1);
             opacityEKBar.setShowSeekBarValue(true);
 
-            String displayResMode = p.getString("displayResolutionMode", "native");
+            String displayResMode = prefs.displayResolutionMode.get();
             findPreference("displayScale").setVisible(displayResMode.contentEquals("scaled"));
             findPreference("displayResolutionExact").setVisible(displayResMode.contentEquals("exact"));
             findPreference("displayResolutionCustom").setVisible(displayResMode.contentEquals("custom"));
 
-            findPreference("hideEKOnVolDown").setEnabled(p.getBoolean("showAdditionalKbd", false) && p.getBoolean("captureVolumeKeys", true));
-            findPreference("dexMetaKeyCapture").setEnabled(!p.getBoolean("enableAccessibilityServiceAutomatically", false));
-            findPreference("enableAccessibilityServiceAutomatically").setEnabled(!p.getBoolean("dexMetaKeyCapture", false));
-            findPreference("pauseKeyInterceptingWithEsc").setEnabled(p.getBoolean("dexMetaKeyCapture", false) || p.getBoolean("enableAccessibilityServiceAutomatically", false));
-            findPreference("filterOutWinkey").setEnabled(p.getBoolean("enableAccessibilityServiceAutomatically", false));
+            findPreference("dexMetaKeyCapture").setEnabled(!prefs.enableAccessibilityServiceAutomatically.get());
+            findPreference("enableAccessibilityServiceAutomatically").setEnabled(!prefs.dexMetaKeyCapture.get());
+            boolean pauseKeyInterceptingWithEscEnabled = prefs.dexMetaKeyCapture.get() || prefs.enableAccessibilityServiceAutomatically.get();
+            findPreference("pauseKeyInterceptingWithEsc").setEnabled(pauseKeyInterceptingWithEscEnabled);
+            findPreference("pauseKeyInterceptingWithEsc").setSummary(pauseKeyInterceptingWithEscEnabled ? "" : "Requires intercepting system shortcuts with Dex mode or with Accessibility service");
+            findPreference("filterOutWinkey").setEnabled(prefs.enableAccessibilityServiceAutomatically.get());
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P)
                 findPreference("hideCutout").setVisible(false);
 
-            findPreference("displayResolutionMode").setSummary(p.getString("displayResolutionMode", "native"));
-            findPreference("displayResolutionExact").setSummary(p.getString("displayResolutionExact", "1280x1024"));
-            findPreference("displayResolutionCustom").setSummary(p.getString("displayResolutionCustom", "1280x1024"));
-            findPreference("displayStretch").setEnabled("exact".contentEquals(p.getString("displayResolutionMode", "native")) || "custom".contentEquals(p.getString("displayResolutionMode", "native")));
+            findPreference("displayResolutionMode").setSummary(prefs.displayResolutionMode.get());
+            findPreference("displayResolutionExact").setSummary(prefs.displayResolutionExact.get());
+            findPreference("displayResolutionCustom").setSummary(prefs.displayResolutionCustom.get());
+            boolean displayStretchEnabled = "exact".contentEquals(prefs.displayResolutionMode.get()) || "custom".contentEquals(prefs.displayResolutionMode.get());
+            findPreference("displayStretch").setEnabled(displayStretchEnabled);
+            findPreference("displayStretch").setSummary(displayStretchEnabled ? "" : "Requires \"display resolution mode\" to be \"exact\" or \"custom\"");
 
-            int modeValue = Integer.parseInt(p.getString("touchMode", "1")) - 1;
+            int modeValue = Integer.parseInt(prefs.touchMode.get()) - 1;
             String mode = getResources().getStringArray(R.array.touchscreenInputModesEntries)[modeValue];
             findPreference("touchMode").setSummary(mode);
-            boolean scaleTouchpadEnabled = "1".equals(p.getString("touchMode", "1")) && !"native".equals(p.getString("displayResolutionMode", "native"));
+            boolean scaleTouchpadEnabled = "1".equals(prefs.touchMode.get()) && !"native".equals(prefs.displayResolutionMode.get());
             findPreference("scaleTouchpad").setEnabled(scaleTouchpadEnabled);
             findPreference("scaleTouchpad").setSummary(scaleTouchpadEnabled ? "" : "Requires \"Touchscreen input mode\" to be \"Trackpad\" and \"Display resolution mode\" to be not \"native\"");
-            findPreference("showMouseHelper").setEnabled("1".equals(p.getString("touchMode", "1")));
+            findPreference("scaleTouchpad").setSummary(scaleTouchpadEnabled ? "" : "Requires \"Touchscreen input mode\" to be \"Trackpad\" and \"Display resolution mode\" to be not \"native\"");
+            findPreference("showMouseHelper").setEnabled("1".equals(prefs.touchMode.get()));
 
             AtomicBoolean stylusAvailable = new AtomicBoolean(false);
             Arrays.stream(InputDevice.getDeviceIds())
@@ -231,6 +251,19 @@ public class LoriePreferences extends AppCompatActivity {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                     && ContextCompat.checkSelfPermission(requireContext(), POST_NOTIFICATIONS) == PERMISSION_DENIED;
             findPreference("requestNotificationPermission").setVisible(requestNotificationPermissionVisible);
+
+            setNoActionOptionText(findPreference("volumeDownAction"), "android volume control");
+            setNoActionOptionText(findPreference("volumeUpAction"), "android volume control");
+        }
+
+        /** @noinspection SameParameterValue*/
+        private void setNoActionOptionText(Preference preference, CharSequence text) {
+            ListPreference p = (ListPreference) preference;
+            CharSequence[] options = p.getEntries();
+            for (int i=0; i<options.length; i++) {
+                if ("no action".contentEquals(options[i]))
+                    options[i] = "no action (" + text + ")";
+            }
         }
 
         @Override
@@ -245,6 +278,7 @@ public class LoriePreferences extends AppCompatActivity {
             for (int i=0; i < g.getPreferenceCount(); i++) {
                 g.getPreference(i).setOnPreferenceChangeListener(this);
                 g.getPreference(i).setOnPreferenceClickListener(this);
+                g.getPreference(i).setPreferenceDataStore(prefs);
 
                 if (g.getPreference(i) instanceof PreferenceGroup)
                     setListeners((PreferenceGroup) g.getPreference(i));
@@ -267,10 +301,9 @@ public class LoriePreferences extends AppCompatActivity {
             if ("extra_keys_config".contentEquals(preference.getKey())) {
                 @SuppressLint("InflateParams")
                 View view = getLayoutInflater().inflate(R.layout.extra_keys_config, null, false);
-                SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getContext());
                 EditText config = view.findViewById(R.id.extra_keys_config);
                 config.setTypeface(Typeface.MONOSPACE);
-                config.setText(preferences.getString("extra_keys_config", TermuxX11ExtraKeys.DEFAULT_IVALUE_EXTRA_KEYS));
+                config.setText(prefs.extra_keys_config.get());
                 TextView desc = view.findViewById(R.id.extra_keys_config_description);
                 desc.setLinksClickable(true);
                 desc.setText(R.string.extra_keys_config_desc);
@@ -281,16 +314,16 @@ public class LoriePreferences extends AppCompatActivity {
                         .setPositiveButton("OK",
                                 (dialog, whichButton) -> {
                                     String text = config.getText().toString();
-                                    text = !text.isEmpty() ? text : TermuxX11ExtraKeys.DEFAULT_IVALUE_EXTRA_KEYS;
-                                    preferences
-                                            .edit()
-                                            .putString("extra_keys_config", text)
-                                            .apply();
+                                    prefs.extra_keys_config.put(!text.isEmpty() ? text : TermuxX11ExtraKeys.DEFAULT_IVALUE_EXTRA_KEYS);
                                 }
                         )
                         .setNegativeButton("Cancel", (dialog, whichButton) -> dialog.dismiss())
                         .create()
                         .show();
+            }
+            if ("configureResponseToUserActions".contentEquals(preference.getKey())) {
+                //noinspection DataFlowIssue
+                new NestedPreferenceFragment("userActions").show(getActivity().getSupportFragmentManager());
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && "requestNotificationPermission".contentEquals(preference.getKey()))
@@ -300,12 +333,18 @@ public class LoriePreferences extends AppCompatActivity {
             return false;
         }
 
+        public void reloadPrefs() {
+            for (String key : prefs.keys.keySet()) {
+                onSetInitialValue(findPreference(key));
+            }
+        }
+
         @SuppressLint("ApplySharedPref")
         @Override
         public boolean onPreferenceChange(Preference preference, Object newValue) {
             String key = preference.getKey();
             Log.e("Preferences", "changed preference: " + key);
-            handler.postDelayed(this::updatePreferencesLayout, 100);
+            handler.postDelayed(this::updatePreferencesLayout, 50);
 
             if ("displayScale".contentEquals(key)) {
                 int scale = (Integer) newValue;
@@ -314,18 +353,6 @@ public class LoriePreferences extends AppCompatActivity {
                     ((SeekBarPreference) preference).setValue(scale);
                     return false;
                 }
-            }
-
-            if ("displayDensity".contentEquals(key)) {
-                int v;
-                try {
-                    v = Integer.parseInt((String) newValue);
-                } catch (NumberFormatException | PatternSyntaxException ignored) {
-                    Toast.makeText(getActivity(), "This field accepts only numerics between 96 and 800", Toast.LENGTH_SHORT).show();
-                    return false;
-                }
-
-                return (v > 96 && v < 800);
             }
 
             if ("displayResolutionCustom".contentEquals(key)) {
@@ -340,12 +367,8 @@ public class LoriePreferences extends AppCompatActivity {
                 }
             }
 
-            if ("showAdditionalKbd".contentEquals(key) && (Boolean) newValue) {
-                SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(requireContext());
-                SharedPreferences.Editor edit = preferences.edit();
-                edit.putBoolean("additionalKbdVisible", true);
-                edit.commit();
-            }
+            if ("showAdditionalKbd".contentEquals(key) && (Boolean) newValue)
+                prefs.additionalKbdVisible.put(true);
 
             if ("enableAccessibilityServiceAutomatically".contentEquals(key)) {
                 if (!((Boolean) newValue))
@@ -383,101 +406,46 @@ public class LoriePreferences extends AppCompatActivity {
             return super.peekService(myContext, service);
         }
 
+        /** @noinspection StringConcatenationInLoop*/
         @SuppressLint("ApplySharedPref")
         @Override
         public void onReceive(Context context, Intent intent) {
             try {
                 if (intent.getExtras() != null) {
-                    SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
+                    Prefs p = (MainActivity.getInstance() != null) ? new Prefs(MainActivity.getInstance()) : (prefs != null ? prefs : new Prefs(context));
                     if (intent.getStringExtra("list") != null) {
                         String result = "";
-                        try {
-                            XmlResourceParser parser = context.getResources().getXml(R.xml.preferences);
-                            String namespace = "http://schemas.android.com/apk/res/android";
-                            Map<String, ?> p = preferences.getAll();
-                            int eventType = parser.getEventType();
-                            while (eventType != XmlPullParser.END_DOCUMENT) {
-                                if (eventType == XmlPullParser.START_TAG) {
-                                    String tagName = parser.getName();
-
-                                    if (tagName.contains("Preference") && !tagName.equals("PreferenceScreen") && !tagName.equals("PreferenceCategory")) {
-                                        String key = parser.getAttributeValue(namespace, "key");
-                                        String value = p.containsKey(key) ? Objects.requireNonNull(p.get(key)).toString() : parser.getAttributeValue(namespace, "defaultValue");
-                                        if (key.equals("extra_keys_config") && !p.containsKey(key))
-                                            value = TermuxX11ExtraKeys.DEFAULT_IVALUE_EXTRA_KEYS;
-                                        if (key.equals("touchMode")) {
-                                            String[] options0 = context.getResources().getStringArray(R.array.touchscreenInputModesEntries);
-                                            String[] options1 = context.getResources().getStringArray(R.array.touchscreenInputModesValues);
-                                            for (int i=0; i<options0.length; i++)
-                                                if (value.contentEquals(options1[i]))
-                                                    value = options0[i];
-                                        }
-                                        if (key.equals("transformCapturedPointer")) {
-                                            String[] options0 = context.getResources().getStringArray(R.array.transformCapturedPointerEntries);
-                                            String[] options1 = context.getResources().getStringArray(R.array.transformCapturedPointerValues);
-                                            for (int i=0; i<options0.length; i++)
-                                                if (value.contentEquals(options1[i]))
-                                                    value = options0[i];
-                                        }
-
-                                        //noinspection StringConcatenationInLoop
-                                        result += "\"" + key + "\"=\"" + value + "\"\n";
-                                    }
-                                }
-                                eventType = parser.next();
+                        for (PrefsProto.Preference pref : p.keys.values()) {
+                            if (pref.type == String.class)
+                                result += "\"" + pref.key + "\"=\"" + pref.asString().get() + "\"\n";
+                            else if (pref.type == int.class)
+                                result += "\"" + pref.key + "\"=\"" + pref.asInt().get() + "\"\n";
+                            else if (pref.type == boolean.class)
+                                result += "\"" + pref.key + "\"=\"" + pref.asBoolean().get() + "\"\n";
+                            else if (pref.type == String[].class) {
+                                String[] entries = context.getResources().getStringArray(pref.asList().entries);
+                                String[] values = context.getResources().getStringArray(pref.asList().values);
+                                String value = pref.asList().get();
+                                int index = Arrays.asList(values).indexOf(value);
+                                if (index != -1)
+                                    value = entries[index];
+                                result += "\"" + pref.key + "\"=\"" + value + "\"\n";
                             }
-                        } catch (XmlPullParserException | IOException e) {
-                            throw new RuntimeException(e);
                         }
+
                         setResultCode(2);
                         setResultData(result);
 
                         return;
                     }
 
-                    SharedPreferences.Editor edit = preferences.edit();
+                    SharedPreferences.Editor edit = p.get().edit();
                     for (String key : intent.getExtras().keySet()) {
                         String newValue = intent.getStringExtra(key);
                         if (newValue == null)
                             continue;
 
                         switch (key) {
-                            case "displayScale": {
-                                int scale = Integer.parseInt(newValue);
-                                if (scale % 10 != 0) {
-                                    scale = Math.round(((float) scale) / 10) * 10;
-                                    edit.putInt("displayScale", scale);
-                                } else
-                                    edit.putInt("displayScale", scale);
-                                break;
-                            }
-                            case "capturedPointerSpeedFactor": {
-                                int v;
-                                try {
-                                    v = Integer.parseInt(newValue);
-                                } catch (NumberFormatException | PatternSyntaxException ignored) {
-                                    v = 100;
-                                }
-                                edit.putInt("capturedPointerSpeedFactor", v);
-                                break;
-                            }
-                            case "displayDensity": {
-                                int v;
-                                try {
-                                    v = Integer.parseInt(newValue);
-                                } catch (NumberFormatException | PatternSyntaxException ignored) {
-                                    v = 0;
-                                }
-
-                                if (!(v > 96 && v < 800)) {
-                                    setResultCode(1);
-                                    setResultData("displayDensity accepts only numerics between 96 and 800.");
-                                    return;
-                                }
-
-                                edit.putInt("displayDensity", v);
-                                break;
-                            }
                             case "displayResolutionCustom": {
                                 try {
                                     String[] resolution = newValue.split("x");
@@ -492,19 +460,13 @@ public class LoriePreferences extends AppCompatActivity {
                                 edit.putString("displayResolutionCustom", newValue);
                                 break;
                             }
-                            case "showAdditionalKbd": {
-                                if ("true".contentEquals(newValue))
-                                    edit.putBoolean("additionalKbdVisible", true);
-                                edit.putBoolean("showAdditionalKbd", "true".contentEquals(newValue));
-                                break;
-                            }
                             case "enableAccessibilityServiceAutomatically": {
                                 if (!"true".equals(newValue))
                                     KeyInterceptor.shutdown();
                                 else if (context.checkSelfPermission(WRITE_SECURE_SETTINGS) != PERMISSION_GRANTED) {
                                     setResultCode(1);
                                     setResultData("Permission denied.\n" +
-                                            "Android requires WRITE_SECURE_SETTINGS permission to change `show_ime_with_hard_keyboard` setting.\n" +
+                                            "Android requires WRITE_SECURE_SETTINGS permission to change `enableAccessibilityServiceAutomatically` setting.\n" +
                                             "Please, launch this command using ADB:\n" +
                                             "adb shell pm grant com.termux.x11 android.permission.WRITE_SECURE_SETTINGS");
                                     return;
@@ -517,89 +479,42 @@ public class LoriePreferences extends AppCompatActivity {
                                 edit.putString(key, newValue);
                                 break;
                             }
-
-                            case "displayResolutionMode":
-                            case "displayResolutionExact":{
-                                int array = 0;
-                                switch (key) {
-                                    case "displayResolutionMode":
-                                        array = R.array.displayResolutionVariants;
-                                        break;
-                                    case "displayResolutionExact":
-                                        array = R.array.displayResolution;
-                                        break;
-                                }
-                                String[] options = context.getResources().getStringArray(array);
-                                if (!Arrays.asList(options).contains(newValue)) {
-                                    setResultCode(1);
-                                    setResultData(key + ": can not be set to " + newValue);
-                                    return;
-                                }
-                                edit.putString(key, newValue);
-                                break;
-                            }
-                            case "touchMode": {
-                                String[] options0 = context.getResources().getStringArray(R.array.touchscreenInputModesEntries);
-                                String[] options1 = context.getResources().getStringArray(R.array.touchscreenInputModesValues);
-                                boolean found = false;
-                                for (int i=0; i<options0.length; i++) {
-                                    if (newValue.contentEquals(options0[i])) {
-                                        found = true;
-                                        edit.putString(key, options1[i]);
-                                        break;
-                                    }
-                                }
-
-                                if (!found) {
-                                    setResultCode(1);
-                                    setResultData(key + ": can not be set to " + newValue);
-                                    return;
-                                }
-                                break;
-                            }
-                            case "transformCapturedPointer": {
-                                String[] options0 = context.getResources().getStringArray(R.array.transformCapturedPointerEntries);
-                                String[] options1 = context.getResources().getStringArray(R.array.transformCapturedPointerValues);
-                                boolean found = false;
-                                for (int i=0; i<options0.length; i++) {
-                                    if (newValue.contentEquals(options0[i])) {
-                                        found = true;
-                                        edit.putString(key, options1[i]);
-                                        break;
-                                    }
-                                }
-
-                                if (!found) {
-                                    setResultCode(1);
-                                    setResultData(key + ": can not be set to " + newValue);
-                                    return;
-                                }
-                                break;
-                            }
-                            case "showIMEWhileExternalConnected":
-                            case "displayStretch":
-                            case "Reseed":
-                            case "PIP":
-                            case "fullscreen":
-                            case "forceLandscape":
-                            case "hideCutout":
-                            case "keepScreenOn":
-                            case "scaleTouchpad":
-                            case "showStylusClickOverride":
-                            case "showMouseHelper":
-                            case "pointerCapture":
-                            case "tapToMove":
-                            case "preferScancodes":
-                            case "dexMetaKeyCapture":
-                            case "filterOutWinkey":
-                            case "clipboardSync": {
-                                edit.putBoolean(key, "true".contentEquals(newValue));
-                                break;
-                            }
                             default: {
-                                setResultCode(4);
-                                setResultData(key + ": unrecognised option");
-                                return;
+                                PrefsProto.Preference pref = p.keys.get(key);
+                                if (pref != null && pref.type == boolean.class) {
+                                    edit.putBoolean(key, "true".contentEquals(newValue));
+                                    if ("showAdditionalKbd".contentEquals(key) && "true".contentEquals(newValue))
+                                        edit.putBoolean("additionalKbdVisible", true);
+                                } else if (pref != null && pref.type == int.class) {
+                                    try {
+                                        edit.putInt(key, Integer.parseInt(newValue));
+                                    } catch (NumberFormatException | PatternSyntaxException exception) {
+                                        setResultCode(4);
+                                        setResultData(key + ": failed to parse integer: " + exception);
+                                        return;
+                                    }
+                                } else if (pref != null && pref.type == String[].class) {
+                                    PrefsProto.ListPreference _p = (PrefsProto.ListPreference) pref;
+                                    String[] entries = context.getResources().getStringArray(_p.entries);
+                                    String[] values = context.getResources().getStringArray(_p.values);
+                                    int index = Arrays.asList(entries).indexOf(newValue);
+
+                                    if (index == -1 && _p.entries != _p.values)
+                                        index = Arrays.asList(values).indexOf(newValue);
+
+                                    if (index != -1) {
+                                        edit.putString(key, values[index]);
+                                        break;
+                                    }
+
+                                    setResultCode(1);
+                                    setResultData(key + ": can not be set to \"" + newValue + "\", possible options are " + Arrays.toString(entries) + (_p.entries != _p.values ? " or " + Arrays.toString(values) : ""));
+                                    return;
+                                } else {
+                                    setResultCode(4);
+                                    setResultData(key + ": unrecognised option");
+                                    return;
+                                }
                             }
                         }
 
@@ -627,15 +542,173 @@ public class LoriePreferences extends AppCompatActivity {
     static Handler handler = new Handler();
 
     public void onClick(View view) {
-        new NestedPreferenceFragment().show(getSupportFragmentManager(), "ekbar");
+        new NestedPreferenceFragment("ekbar").show(getSupportFragmentManager());
     }
 
     public static class NestedPreferenceFragment extends DialogFragment {
+        private final String fragment;
+        NestedPreferenceFragment(String fragment) {
+            this.fragment = fragment;
+        }
+
         @Nullable @Override
         public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
-            getChildFragmentManager().beginTransaction().replace(android.R.id.content, new LoriePreferenceFragment("ekbar")).commit();
-
+            getChildFragmentManager().beginTransaction().replace(android.R.id.content, new LoriePreferenceFragment(fragment)).commit();
             return null;
+        }
+
+        public void show(@NonNull FragmentManager manager) {
+            show(manager, fragment);
+        }
+    }
+
+    /** @noinspection unused*/
+    @SuppressLint("ApplySharedPref")
+    public static class PrefsProto extends PreferenceDataStore {
+        public static class Preference {
+            protected final String key;
+            protected final Class<?> type;
+            protected final Object defValue;
+            protected Preference(String key, Class<?> class_, Object default_) {
+                this.key = key;
+                this.type = class_;
+                this.defValue = default_;
+            }
+
+            public ListPreference asList() {
+                return (ListPreference) this;
+            }
+
+            public StringPreference asString() {
+                return (StringPreference) this;
+            }
+
+            public IntPreference asInt() {
+                return (IntPreference) this;
+            }
+
+            public BooleanPreference asBoolean() {
+                return (BooleanPreference) this;
+            }
+        }
+
+        public class BooleanPreference extends Preference {
+            public BooleanPreference(String key, boolean defValue) {
+                super(key, boolean.class, defValue);
+            }
+
+            public boolean get() {
+                if ("storeSecondaryDisplayPreferencesSeparately".contentEquals(key))
+                    return builtInDisplayPreferences.getBoolean(key, (boolean) defValue);
+
+                return preferences.getBoolean(key, (boolean) defValue);
+            }
+
+            public void put(boolean v) {
+                if ("storeSecondaryDisplayPreferencesSeparately".contentEquals(key)) {
+                    builtInDisplayPreferences.edit().putBoolean(key, v).commit();
+                    recheckStoringSecondaryDisplayPreferences();
+                }
+
+                preferences.edit().putBoolean(key, v).commit();
+            }
+        }
+
+        public class IntPreference extends Preference {
+            public IntPreference(String key, int defValue) {
+                super(key, int.class, defValue);
+            }
+
+            public int get() {
+                return preferences.getInt(key, (int) defValue);
+            }
+
+            public int defValue() {
+                return preferences.getInt(key, (int) defValue);
+            }
+        }
+
+        public class StringPreference extends Preference {
+            public StringPreference(String key, String defValue) {
+                super(key, String.class, defValue);
+            }
+
+            public String get() {
+                return preferences.getString(key, (String) defValue);
+            }
+
+            public void put(String v) {
+                preferences.edit().putString(key, v).commit();
+            }
+        }
+
+        public class ListPreference extends Preference {
+            public final int entries, values;
+
+            public ListPreference(String key, String defValue, int entries, int values) {
+                super(key, String[].class, defValue);
+                this.entries = entries;
+                this.values = values;
+            }
+
+            public String get() {
+                return preferences.getString(key, (String) defValue);
+            }
+
+            public void put(String v) {
+                preferences.edit().putString(key, v).commit();
+            }
+        }
+
+        static boolean storeSecondaryDisplayPreferencesSeparately = false;
+        protected Context ctx;
+        protected SharedPreferences preferences;
+        protected SharedPreferences builtInDisplayPreferences;
+        protected SharedPreferences secondaryDisplayPreferences;
+
+        private PrefsProto() {} // No instantiation allowed
+        protected PrefsProto(Context ctx) {
+            this.ctx = ctx;
+            builtInDisplayPreferences = PreferenceManager.getDefaultSharedPreferences(ctx);
+            secondaryDisplayPreferences = ctx.getSharedPreferences("secondary", Context.MODE_PRIVATE);
+            recheckStoringSecondaryDisplayPreferences();
+        }
+
+        protected void recheckStoringSecondaryDisplayPreferences() {
+            storeSecondaryDisplayPreferencesSeparately = builtInDisplayPreferences.getBoolean("storeSecondaryDisplayPreferencesSeparately", false);
+            boolean isExternalDisplay = ((WindowManager) ctx.getSystemService(WINDOW_SERVICE)).getDefaultDisplay().getDisplayId() != Display.DEFAULT_DISPLAY;
+            preferences = (storeSecondaryDisplayPreferencesSeparately && isExternalDisplay) ? secondaryDisplayPreferences : builtInDisplayPreferences;
+        }
+
+        @Override public void putBoolean(String k, boolean v) {
+            if ("storeSecondaryDisplayPreferencesSeparately".contentEquals(k)) {
+                builtInDisplayPreferences.edit().putBoolean(k, v).commit();
+                recheckStoringSecondaryDisplayPreferences();
+            } else
+                preferences.edit().putBoolean(k, v).commit();
+        }
+        @Override public boolean getBoolean(String k, boolean d) {
+            if ("storeSecondaryDisplayPreferencesSeparately".contentEquals(k))
+                return builtInDisplayPreferences.getBoolean(k, d);
+            return preferences.getBoolean(k, d);
+        }
+        @Override public void putString(String k, @Nullable String v) { prefs.get().edit().putString(k, v).commit(); }
+        @Override public void putStringSet(String k, @Nullable Set<String> v) { prefs.get().edit().putStringSet(k, v).commit(); }
+        @Override public void putInt(String k, int v) { prefs.get().edit().putInt(k, v).commit(); }
+        @Override public void putLong(String k, long v) { prefs.get().edit().putLong(k, v).commit(); }
+        @Override public void putFloat(String k, float v) { prefs.get().edit().putFloat(k, v).commit(); }
+        @Nullable @Override public String getString(String k, @Nullable String d) { return prefs.get().getString(k, d); }
+        @Nullable @Override public Set<String> getStringSet(String k, @Nullable Set<String> ds) { return prefs.get().getStringSet(k, ds); }
+        @Override public int getInt(String k, int d) { return prefs.get().getInt(k, d); }
+        @Override public long getLong(String k, long d) { return prefs.get().getLong(k, d); }
+        @Override public float getFloat(String k, float d) { return prefs.get().getFloat(k, d); }
+
+        public SharedPreferences get() {
+            return preferences;
+        }
+
+        public boolean isSecondaryDisplayPreferences() {
+            return preferences == secondaryDisplayPreferences;
         }
     }
 }

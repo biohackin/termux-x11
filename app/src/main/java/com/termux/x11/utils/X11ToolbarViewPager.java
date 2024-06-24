@@ -1,10 +1,8 @@
 package com.termux.x11.utils;
 
 import android.annotation.SuppressLint;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
-import android.preference.PreferenceManager;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
@@ -114,11 +112,9 @@ public class X11ToolbarViewPager {
         public void destroyItem(@NonNull ViewGroup collection, int position, @NonNull Object view) {
             collection.removeView((View) view);
         }
-
     }
 
     public static class OnPageChangeListener extends ViewPager.SimpleOnPageChangeListener {
-
         final MainActivity act;
         final ViewPager mTerminalToolbarViewPager;
 
