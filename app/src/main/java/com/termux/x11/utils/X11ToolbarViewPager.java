@@ -50,7 +50,8 @@ public class X11ToolbarViewPager {
             View layout;
             if (position == 0) {
                 layout = inflater.inflate(R.layout.view_terminal_toolbar_extra_keys, collection, false);
-                ExtraKeysView extraKeysView = (ExtraKeysView) layout;
+                //ExtraKeysView extraKeysView = (ExtraKeysView) layout;
+                ExtraKeysView extraKeysView = (ExtraKeysView) layout.findViewById(R.id.terminal_toolbar_extra_keys);  //..SimplyTheBest
                 mActivity.mExtraKeys = new TermuxX11ExtraKeys(mEventListener, mActivity, extraKeysView);
                 extraKeysView.reload();
                 extraKeysView.setExtraKeysViewClient(mActivity.mExtraKeys);
