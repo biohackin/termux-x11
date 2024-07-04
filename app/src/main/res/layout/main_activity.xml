@@ -268,6 +268,20 @@
             tools:ignore="HardcodedText,PxUsage,SmallSp" />
     </LinearLayout>
 
+    <com.github.mmin18.widget.RealtimeBlurView
+        android:id="@+id/extrakeys_backgroundblur"
+        android:layout_width="match_parent"
+        android:layout_height="37.5dp"
+        android:layout_alignParentBottom="true"
+        app:realtimeBlurRadius="10dp"
+        app:realtimeOverlayColor="@android:color/transparent" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="37.5dp"
+        android:layout_alignParentBottom="true"
+        android:background="#50000000"/>
+    
     <androidx.viewpager.widget.ViewPager
         android:id="@+id/terminal_toolbar_view_pager"
         android:visibility="gone"
