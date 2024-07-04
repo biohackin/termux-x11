@@ -28,8 +28,9 @@ Just like any other X server.
 Application runs only on Android 8+ devices.
 For this one you must enable the `x11-repo` repository can be done by executing `pkg install x11-repo` command
 
-For X applications to work, you must install Termux-x11 companion package. You can do that by downloading an artifact from [last successful build](https://github.com/termux/termux-x11/actions/workflows/debug_build.yml) and installing `termux-x11-*-debug.apk` (according to device `architecture`, universal if you are doubting) and `*.deb` (if you use termux with `pkg`) or `*.tar.xz` (if you use termux with `pacman`) files from `termux-companion packages` artifact (do not try to install `shell-loader-nightly.apk` as Android application, it is not intended to be installed, it is only for chroot users).
-Or you can install nightly companion package from repositories with `pkg in x11-repo && pkg in termux-x11-nightly`
+For X applications to work, you must install Termux-x11 companion package. 
+You can install nightly companion package from repositories with `pkg in x11-repo && pkg in termux-x11-nightly`
+Or you can download an artifact from [last successful build](https://github.com/termux/termux-x11/actions/workflows/debug_build.yml) and installing `termux-x11-*-debug.apk` (according to device `architecture`, universal if you are doubting) and `*.deb` (if you use termux with `pkg`) or `*.tar.xz` (if you use termux with `pacman`) files from `termux-companion packages` artifact.
 
 ## Running Graphical Applications
 You can start your desired graphical application by doing:
@@ -47,6 +48,14 @@ You may replace `xfce4-session` if you use other than Xfce
 ```
 ~ $ termux-x11 :1 -xstartup "xfce4-session"
 ```
+
+Also you can do 
+```
+export TERMUX_X11_XSTARTUP="xfce4-session"
+termux-x11 :1
+```
+In this case you can same TERMUX_X11_XSTARTUP somewhere in `.bashrc` or other script and not type it every time you invoke termux-x11.  
+
 
 If you're done using Termux:X11 just simply exit it through it's notification drawer by expanding the Termux:X11 notification then "Exit"
 But you should pay attention that `termux-x11` command is still running and can not be killed this way.
