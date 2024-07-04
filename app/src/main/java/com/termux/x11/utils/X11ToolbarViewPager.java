@@ -79,6 +79,7 @@ public class X11ToolbarViewPager {
                 back.setOnClickListener(v -> mActivity.getTerminalToolbarViewPager().setCurrentItem(0, true));
                 //back.setTextColor(0xFFFFFFFF);
                 back.setTextColor(0xFF98CBFF);  //..SimplyTheBest
+                back.setTextSize(25);  //..SimplyTheBest
                 back.setPadding(0, 0, 0, 0);
                 back.setBackground(new ColorDrawable(Color.BLACK) {
                     public boolean isStateful() {
